@@ -2,10 +2,49 @@
 #include <Eigen/Eigen>
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
+#include <iomanip>
+#include <sstream>
 
 using PointType = pcl::PointXYZINormal;
 using CloudType = pcl::PointCloud<PointType>;
 using PointVec = std::vector<PointType, Eigen::aligned_allocator<PointType>>;
+
+// 6DOF Pose point type for trajectory storage (compatible with fast_lio_sam)
+struct PointTypePose {
+    PCL_ADD_POINT4D;                  // x, y, z, padding
+    float intensity;                   // keyframe index
+    float roll;
+    float pitch;
+    float yaw;
+    double time;
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+} EIGEN_ALIGN16;
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(PointTypePose,
+    (float, x, x)(float, y, y)(float, z, z)
+    (float, intensity, intensity)
+    (float, roll, roll)(float, pitch, pitch)(float, yaw, yaw)
+    (double, time, time)
+)
+
+using PoseCloud = pcl::PointCloud<PointTypePose>;
+
+// Utility: pad zeros for file naming (e.g., 1 -> "000001")
+inline std::string padZeros(int val, int width = 6) {
+    std::ostringstream ss;
+    ss << std::setw(width) << std::setfill('0') << val;
+    return ss.str();
+}
+
+// Pose struct for KITTI format trajectory saving
+struct KittiPose {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    Eigen::Matrix3d R;
+    Eigen::Vector3d t;
+    
+    KittiPose() : R(Eigen::Matrix3d::Identity()), t(Eigen::Vector3d::Zero()) {}
+    KittiPose(const Eigen::Matrix3d& _R, const Eigen::Vector3d& _t) : R(_R), t(_t) {}
+};
 
 using M3D = Eigen::Matrix3d;
 using V3D = Eigen::Vector3d;

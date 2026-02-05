@@ -30,3 +30,29 @@ r_il: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 t_il: [-0.011, -0.02329, 0.04412]
 
 lidar_cov_inv: 1000.0
+
+# Keyframe management
+keyframe_dist_threshold: 1.0      # distance threshold for keyframe selection (m)
+keyframe_angle_threshold: 0.2     # angle threshold for keyframe selection (rad)
+
+# Loop closure
+loop_closure_enable: true
+loop_closure_frequency: 1.0       # Hz
+loop_search_radius: 15.0          # m
+loop_time_diff_threshold: 30.0    # s
+sc_dist_threshold: 0.25           # ScanContext similarity threshold
+icp_fitness_threshold: 1.5        # ICP convergence threshold (放宽)
+submap_size: 25                   # number of keyframes in submap
+
+# Map saving on exit
+save_map_on_exit: true            # automatically save map when node exits
+map_save_path: "/home/li/maps"    # directory to save map
+save_patches: true               # save individual keyframe point clouds
+
+# Extended saving options (compatible with fast_lio_sam)
+save_trajectory_txt: true         # save KITTI format trajectory (optimized_pose.txt, without_optimized_pose.txt)
+save_scd_files: true              # save ScanContext descriptor files (.scd)
+save_pose_graph: true             # save pose graph file (pose_graph.g2o)
+save_performance_log: true        # save performance CSV log (fast_lio_time_log.csv)
+# Note: map_resolution is already defined above for scan resolution, 
+#       but can also control saved map voxel filter resolution

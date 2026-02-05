@@ -30,6 +30,7 @@ find_package(sensor_msgs REQUIRED)
 find_package(livox_ros_driver2 REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(interface REQUIRED)
 
 find_package(OpenMP QUIET)
 find_package(PCL REQUIRED)
@@ -37,9 +38,24 @@ find_package(Eigen3 REQUIRED)
 find_package(Sophus REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
+# Use locally installed GTSAM 4.2.0 instead of ROS2 Humble's version
+set(GTSAM_DIR "/usr/local/lib/cmake/GTSAM")
+find_package(GTSAM REQUIRED)
+
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}   ${OpenMP_C_FLAGS}")
+
+# ScanContext library
+add_library(scancontext
+    include/sc-relo/Scancontext.cpp
+)
+target_include_directories(scancontext PUBLIC 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${PCL_INCLUDE_DIRS}
+    ${EIGEN3_INCLUDE_DIR}
+)
+target_link_libraries(scancontext ${PCL_LIBRARIES})
 
 set(SRC_LIST src/map_builder/commons.cpp
              src/map_builder/ieskf.cpp
@@ -47,12 +63,21 @@ set(SRC_LIST src/map_builder/commons.cpp
              src/map_builder/ikd_Tree.cpp
              src/map_builder/lidar_processor.cpp
              src/map_builder/map_builder.cpp
+             src/loop_closure/keyframe_manager.cpp
+             src/loop_closure/loop_detector.cpp
+             src/loop_closure/pose_graph_optimizer.cpp
              src/utils.cpp)
 
 add_executable(lio_node src/lio_node.cpp ${SRC_LIST})
-ament_target_dependencies(lio_node rclcpp std_msgs tf2 tf2_ros nav_msgs sensor_msgs livox_ros_driver2 pcl_conversions geometry_msgs)
+ament_target_dependencies(lio_node rclcpp std_msgs tf2 tf2_ros nav_msgs sensor_msgs livox_ros_driver2 pcl_conversions geometry_msgs interface)
+target_include_directories(lio_node PUBLIC 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${GTSAM_INCLUDE_DIR}
+)
 target_link_libraries(lio_node
   yaml-cpp
+  scancontext
+  gtsam
   ${PCL_LIBRARIES}
 )
 

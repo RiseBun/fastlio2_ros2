@@ -68,6 +68,12 @@ public:
     void predict(const Input &inp, double dt, const M12D &Q);
 
     void update();
+    
+    // Loop closure state correction
+    void change_x(const M3D& rotation, const V3D& position);
+    
+    // Reset pose covariance after loop closure
+    void resetPoseCovariance(double variance = 1e-4);
 
     State &x() { return m_x; }
 

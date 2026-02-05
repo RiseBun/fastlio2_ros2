@@ -1,0 +1,12 @@
+# ROS 2 编译产物
+build/
+install/
+log/
+
+# IDE
+.vscode/
+.idea/
+
+# 临时文件
+*.swp
+*~

@@ -118,3 +118,19 @@ void IESKF::update()
     L.block<3, 3>(6, 6) = Jr(delta.segment<3>(6));
     m_P = L * H.inverse() * L.transpose();
 }
+
+void IESKF::change_x(const M3D& rotation, const V3D& position)
+{
+    // Only update rotation and position, preserve other states
+    // (velocity, biases, extrinsics are not modified)
+    m_x.r_wi = rotation;
+    m_x.t_wi = position;
+}
+
+void IESKF::resetPoseCovariance(double variance)
+{
+    // Reset covariance for rotation and translation states
+    // This helps stabilize the filter after loop closure correction
+    m_P.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() * variance;  // rotation
+    m_P.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * variance;  // translation
+}
