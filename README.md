@@ -248,7 +248,7 @@ keyframe_cloud_res: 0.15          # 关键帧点云降采样分辨率
 # 增量保存
 enable_incremental_save: false    # 启用增量保存
 incremental_save_interval: 500    # 每N个关键帧保存一次
-incremental_save_path: "/home/li/maps/incremental"
+incremental_save_path: "~/maps/incremental"   # 需修改为实际路径
 ```
 
 **内存估算公式**：
@@ -331,27 +331,22 @@ icp_fitness_threshold: 0.4
 
 ### 3.2 依赖安装
 
-#### 3.2.1 安装ROS 2 Humble
 
-```bash
-# 设置locale
-sudo apt update && sudo apt install locales
-sudo locale-gen en_US en_US.UTF-8
-sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
-export LANG=en_US.UTF-8
-
-# 添加ROS 2源
-sudo apt install software-properties-common
-sudo add-apt-repository universe
-sudo apt update && sudo apt install curl -y
-sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
-
-# 安装ROS 2
-sudo apt update
-sudo apt install ros-humble-desktop ros-humble-ros-base ros-dev-tools
+## 实例数据集
+```text
+链接: https://pan.baidu.com/s/1rTTUlVwxi1ZNo7ZmcpEZ7A?pwd=t6yb 提取码: t6yb 
+--来自百度网盘超级会员v7的分享
 ```
 
+#### 3.2.1 扩展swap，根据情况扩展，推荐8G及以上
+```bash
+sudo swapoff /swapfile 2>/dev/null
+sudo dd if=/dev/zero of=/swapfile bs=1M count=8192 status=progress && \
+sudo chmod 600 /swapfile && \
+sudo mkswap /swapfile && \
+sudo swapon /swapfile && \
+free -h
+```
 #### 3.2.2 安装系统依赖
 
 ```bash
@@ -372,19 +367,29 @@ sudo apt install -y \
 
 #### 3.2.3 安装GTSAM 4.2.0
 
+> **重要**: Ubuntu 22.04 系统自带 Eigen 3.4.0，必须添加 `-DGTSAM_USE_SYSTEM_EIGEN=ON` 参数，否则会导致编译 fastlio2 时出现 Eigen 版本不匹配错误。
+
 ```bash
 # 克隆GTSAM
 cd ~
 git clone --branch 4.2.0 https://github.com/borglab/gtsam.git
 cd gtsam
 
-# 编译安装
+# 编译安装 (注意: 必须使用 GTSAM_USE_SYSTEM_EIGEN=ON)
 mkdir build && cd build
 cmake .. -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
          -DGTSAM_BUILD_TESTS=OFF \
-         -DGTSAM_WITH_TBB=OFF
+         -DGTSAM_WITH_TBB=OFF \
+         -DGTSAM_USE_SYSTEM_EIGEN=ON
 make -j$(nproc)
 sudo make install
+
+# 配置动态链接库路径 (重要! 否则运行时会报 libgtsam.so.4 找不到)
+echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/gtsam.conf
+sudo ldconfig
+
+# 验证安装
+ldconfig -p | grep gtsam
 ```
 
 #### 3.2.4 安装Sophus
@@ -398,38 +403,89 @@ cmake ..
 make -j$(nproc)
 sudo make install
 ```
-
-#### 3.2.5 安装Livox ROS2驱动
-
+#### 3.2.5 安装livox sdk2
 ```bash
-mkdir -p ~/ws_livox/src
-cd ~/ws_livox/src
-git clone https://github.com/Livox-SDK/livox_ros_driver2.git
-
-cd ~/ws_livox
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install
+cd ~
+git clone https://github.com/Livox-SDK/Livox-SDK2.git
+cd ./Livox-SDK2/
+mkdir build
+cd build
+cmake .. && make -j
+sudo make install
 ```
+#### 3.2.6 安装Livox ROS2驱动
+```bash
+mkdir -p ~/livox_ws/src
+cd ~/livox_ws/src
+git clone https://github.com/Livox-SDK/livox_ros_driver2.git
+cd ~/livox_ws/src/livox_ros_driver2
+source /opt/ros/humble/setup.sh
+./build.sh humble
+```
+
 
 ### 3.3 编译安装
 
 ```bash
-# 克隆项目
+# 克隆项目 (如果还没有)
 cd ~
-git clone https://github.com/your-repo/FASTLIO2_ROS2.git
+git clone https://github.com/your-username/fastlio2_ros2.git
 
 # 编译
-cd ~/FASTLIO2_ROS2
+cd ~/fastlio2_ros2
 source /opt/ros/humble/setup.bash
-source ~/ws_livox/install/setup.bash
+source ~/livox_ws/install/setup.bash
+colcon build --packages-select interface
 colcon build --symlink-install
 
 # 添加到环境
-echo "source ~/FASTLIO2_ROS2/install/setup.bash" >> ~/.bashrc
+echo "source ~/fastlio2_ros2/install/setup.bash" >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### 3.4 嵌入式平台配置
+### 3.4 新用户配置 (重要!)
+
+> **首次部署必读**: 以下文件包含硬编码路径，新用户必须根据自己的系统环境进行修改。
+
+#### 3.4.1 配置文件路径修改
+
+编辑 `fastlio2/config/lio.yaml`，修改以下路径参数：
+
+```yaml
+# 将 /home/li 替换为你的用户主目录，例如 /home/your_username
+
+# 地图保存路径 (第275行附近)
+map_save_path: "/home/li/maps"              # 修改为: "/home/your_username/maps"
+
+# 增量保存路径 (第359行附近)
+incremental_save_path: "/home/li/maps/incremental"  # 修改为: "/home/your_username/maps/incremental"
+
+# 重定位先验地图路径 (第394行附近)
+prior_map_path: "/home/li/maps"             # 修改为: "/home/your_username/maps"
+```
+
+**快速替换命令**:
+```bash
+# 将配置文件中的 /home/li 替换为当前用户目录
+sed -i "s|/home/li|$HOME|g" ~/fastlio2_ros2/fastlio2/config/lio.yaml
+```
+
+#### 3.4.2 GUI脚本路径 (已自动检测)
+
+GUI 脚本 (`scripts/gui_launcher.py`) 现在会**自动检测**工作空间路径，无需手动修改。
+
+- `ws_path`: 根据脚本位置自动推断
+- `livox_ws_path`: 默认使用 `~/livox_ws`
+
+> **注意**: 如果你的 livox_ws 不在默认位置 (`~/livox_ws`)，需要手动修改 `scripts/gui_launcher.py` 第44行。
+
+#### 3.4.3 创建地图保存目录
+
+```bash
+mkdir -p ~/maps/incremental
+```
+
+### 3.5 嵌入式平台配置
 
 #### Jetson Orin优化配置
 
@@ -467,7 +523,7 @@ incremental_save_interval: 300
 #### 方式一：使用GUI控制面板 (推荐)
 
 ```bash
-cd ~/FASTLIO2_ROS2/scripts
+cd ~/fastlio2_ros2/scripts
 python3 gui_launcher.py
 ```
 
@@ -476,12 +532,12 @@ python3 gui_launcher.py
 ```bash
 # 终端1: 启动Livox驱动
 source /opt/ros/humble/setup.bash
-source ~/ws_livox/install/setup.bash
+source ~/livox_ws/install/setup.bash
 ros2 launch livox_ros_driver2 msg_MID360_launch.py
 
 # 终端2: 启动FASTLIO2
 source /opt/ros/humble/setup.bash
-source ~/FASTLIO2_ROS2/install/setup.bash
+source ~/fastlio2_ros2/install/setup.bash
 ros2 launch fastlio2 lio_launch.py
 ```
 
@@ -698,7 +754,7 @@ Stage 3: ICP几何验证
    ```yaml
    relocalization:
      enable_on_startup: true
-     prior_map_path: "/home/li/maps/session1"
+     prior_map_path: "~/maps/session1"   # 修改为你的地图路径
    ```
 
 3. **启动系统**: 系统将自动执行重定位
@@ -713,7 +769,7 @@ Stage 3: ICP几何验证
 ```yaml
 enable_incremental_save: true
 incremental_save_interval: 500    # 每500个关键帧
-incremental_save_path: "/home/li/maps/incremental"
+incremental_save_path: "~/maps/incremental"   # 修改为你的路径
 ```
 
 保存内容:
@@ -764,7 +820,62 @@ sudo make install
 export GTSAM_DIR=/usr/local/lib/cmake/GTSAM
 ```
 
-### 问题2: 运行时找不到livox_ros_driver2库
+### 问题2: 编译错误 - GTSAM与Eigen版本不匹配
+
+**错误信息**:
+```
+error: static assertion failed: Error: GTSAM was built against a different version of Eigen
+```
+
+**原因**: GTSAM 默认使用自带的 Eigen 3.3.7，但系统安装的是 Eigen 3.4.0（Ubuntu 22.04 默认版本）。
+
+**解决方案**:
+```bash
+# 1. 删除旧的 GTSAM 安装
+sudo rm -rf /usr/local/include/gtsam
+sudo rm -rf /usr/local/lib/libgtsam*
+sudo rm -rf /usr/local/lib/cmake/GTSAM
+
+# 2. 重新编译 GTSAM (必须使用系统 Eigen)
+cd ~/gtsam/build
+rm -rf *
+cmake .. -DGTSAM_BUILD_EXAMPLES_ALWAYS=OFF \
+         -DGTSAM_BUILD_TESTS=OFF \
+         -DGTSAM_WITH_TBB=OFF \
+         -DGTSAM_USE_SYSTEM_EIGEN=ON
+make -j$(nproc)
+sudo make install
+
+# 3. 验证安装 (应显示 GTSAM_EIGEN_VERSION_MAJOR 为 4)
+grep "GTSAM_EIGEN_VERSION" /usr/local/include/gtsam/config.h
+
+# 4. 重新编译 fastlio2_ros2
+cd ~/fastlio2_ros2
+rm -rf build install log
+colcon build --packages-select interface
+colcon build
+```
+
+### 问题3: 运行时找不到GTSAM动态库
+
+**错误信息**:
+```
+error while loading shared libraries: libgtsam.so.4: cannot open shared object file: No such file or directory
+```
+
+**原因**: GTSAM 安装到 `/usr/local/lib`，但系统动态链接器未包含该路径。
+
+**解决方案**:
+```bash
+# 添加 /usr/local/lib 到动态链接器搜索路径
+echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/gtsam.conf
+sudo ldconfig
+
+# 验证
+ldconfig -p | grep gtsam
+```
+
+### 问题4: 运行时找不到livox_ros_driver2库
 
 **错误信息**:
 ```
@@ -774,14 +885,14 @@ error while loading shared libraries: liblivox_ros_driver2...
 **解决方案**:
 ```bash
 # 确保source了livox工作空间
-source ~/ws_livox/install/setup.bash
+source ~/livox_ws/install/setup.bash
 
 # 添加到ldconfig
-echo "/home/$USER/ws_livox/install/livox_ros_driver2/lib" | sudo tee /etc/ld.so.conf.d/livox.conf
+echo "/home/$USER/livox_ws/install/livox_ros_driver2/lib" | sudo tee /etc/ld.so.conf.d/livox.conf
 sudo ldconfig
 ```
 
-### 问题3: IMU数据时间戳乱序
+### 问题5: IMU数据时间戳乱序
 
 **错误信息**:
 ```
@@ -793,7 +904,7 @@ sudo ldconfig
 - 确保数据包录制时ROS2 QoS配置正确
 - 尝试降低数据包播放速率: `ros2 bag play xxx --rate 0.5`
 
-### 问题4: 回环检测误匹配导致地图错误
+### 问题6: 回环检测误匹配导致地图错误
 
 **现象**: 地图出现明显扭曲或错位
 
@@ -805,7 +916,7 @@ icp_fitness_threshold: 0.3     # 减小 (更严格)
 loop_time_diff_threshold: 60.0 # 增大 (更大时间间隔)
 ```
 
-### 问题5: 内存不足导致系统崩溃
+### 问题7: 内存不足导致系统崩溃
 
 **解决方案**:
 ```yaml
@@ -817,7 +928,7 @@ scan_resolution: 0.25
 enable_incremental_save: true
 ```
 
-### 问题6: GUI启动失败
+### 问题8: GUI启动失败
 
 **错误信息**:
 ```
@@ -910,7 +1021,7 @@ ros2 topic echo /fastlio2/lio_odom
 
 # 调用保存服务
 ros2 service call /fastlio2/lio/save_map interface/srv/SaveMaps \
-  "{file_path: '/home/li/maps/test', save_patches: true}"
+  "{file_path: '~/maps/test', save_patches: true}"
 
 # 记录数据包
 ros2 bag record -o my_bag /livox/lidar /livox/imu

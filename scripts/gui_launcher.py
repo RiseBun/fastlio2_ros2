@@ -37,9 +37,11 @@ class FASTLIO2Launcher:
             'rosbag': None
         }
         
-        # 配置路径
-        self.ws_path = Path("/home/li/FASTLIO2_ROS2")
-        self.livox_ws_path = Path("/home/li/ws_livox")
+        # 配置路径 (自动检测，无需手动修改)
+        # ws_path: 根据脚本位置自动推断 fastlio2_ros2 工作空间路径
+        # livox_ws_path: 默认在用户主目录下的 livox_ws
+        self.ws_path = Path(__file__).resolve().parent.parent
+        self.livox_ws_path = Path.home() / "livox_ws"
         self.ros2_setup = "/opt/ros/humble/setup.bash"
         self.config_path = self.ws_path / "fastlio2" / "config" / "lio.yaml"
         
