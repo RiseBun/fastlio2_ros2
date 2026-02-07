@@ -6,6 +6,7 @@
 #include <atomic>
 #include <thread>
 #include <queue>
+#include <set>
 #include <Eigen/Eigen>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
@@ -20,9 +21,21 @@ struct LoopClosureResult {
     bool valid = false;
     int current_idx = -1;
     int loop_idx = -1;
-    Eigen::Affine3f transform;
+    Eigen::Affine3f icp_transform;      // ICP result: source_body -> target_body
     float fitness_score = 0.0f;
     float sc_score = 0.0f;
+    
+    // World poses for constraint calculation (following fast_lio_sam approach)
+    Eigen::Matrix3f current_rotation;   // Current frame rotation in world
+    Eigen::Vector3f current_position;   // Current frame position in world
+    Eigen::Matrix3f loop_rotation;      // Loop frame rotation in world
+    Eigen::Vector3f loop_position;      // Loop frame position in world
+    
+    LoopClosureResult() : icp_transform(Eigen::Affine3f::Identity()),
+                          current_rotation(Eigen::Matrix3f::Identity()),
+                          current_position(Eigen::Vector3f::Zero()),
+                          loop_rotation(Eigen::Matrix3f::Identity()),
+                          loop_position(Eigen::Vector3f::Zero()) {}
 };
 
 struct LoopDetectorConfig {
@@ -91,6 +104,11 @@ private:
     ScanContext::SCManager sc_manager_;
     
     std::vector<LoopClosureResult> pending_loops_;
+    // History of detected loops to prevent duplicates
+    std::set<std::pair<int, int>> detected_loop_pairs_;
+    int last_loop_detected_idx_ = -1;
+    const int LOOP_COOLDOWN_FRAMES = 20;  // Wait N frames before detecting new loops
+    
     std::mutex mutex_;
     
     // ICP object

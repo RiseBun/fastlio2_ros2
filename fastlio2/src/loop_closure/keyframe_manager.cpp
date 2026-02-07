@@ -1,6 +1,7 @@
 #include "keyframe_manager.h"
 #include <iostream>
 #include <cmath>
+#include <pcl/common/transforms.h>
 
 KeyFrameManager::KeyFrameManager(const KeyFrameConfig& config)
     : config_(config),
@@ -49,53 +50,67 @@ bool KeyFrameManager::shouldAddKeyFrame(const M3D& rotation, const V3D& position
 void KeyFrameManager::addKeyFrame(const KeyFrame& kf) {
     std::lock_guard<std::mutex> lock(mutex_);
     
-    keyframes_.push_back(kf);
+    // Downsample keyframe cloud if configured
+    KeyFrame new_kf = kf;
+    if (new_kf.cloud && !new_kf.cloud->empty() && config_.cloud_downsample_res > 0) {
+        downsampleCloud(new_kf.cloud);
+    }
+    new_kf.cloud_valid = (new_kf.cloud != nullptr && !new_kf.cloud->empty());
+    
+    keyframes_.push_back(new_kf);
     
     // Update last keyframe pose
-    last_kf_rotation_ = kf.rotation;
-    last_kf_position_ = kf.position;
+    last_kf_rotation_ = new_kf.rotation;
+    last_kf_position_ = new_kf.position;
     
     // Add position to cloud for kdtree
     pcl::PointXYZ pt;
-    pt.x = static_cast<float>(kf.position.x());
-    pt.y = static_cast<float>(kf.position.y());
-    pt.z = static_cast<float>(kf.position.z());
+    pt.x = static_cast<float>(new_kf.position.x());
+    pt.y = static_cast<float>(new_kf.position.y());
+    pt.z = static_cast<float>(new_kf.position.z());
     positions_cloud_->push_back(pt);
     
     // Add to 3D pose cloud (position only)
     PointType pose3d;
-    pose3d.x = static_cast<float>(kf.position.x());
-    pose3d.y = static_cast<float>(kf.position.y());
-    pose3d.z = static_cast<float>(kf.position.z());
-    pose3d.intensity = static_cast<float>(kf.id);
+    pose3d.x = static_cast<float>(new_kf.position.x());
+    pose3d.y = static_cast<float>(new_kf.position.y());
+    pose3d.z = static_cast<float>(new_kf.position.z());
+    pose3d.intensity = static_cast<float>(new_kf.id);
     cloud_key_poses_3d_->push_back(pose3d);
     
     // Add to 6D pose cloud
     PointTypePose pose6d;
-    pose6d.x = static_cast<float>(kf.position.x());
-    pose6d.y = static_cast<float>(kf.position.y());
-    pose6d.z = static_cast<float>(kf.position.z());
-    pose6d.intensity = static_cast<float>(kf.id);
-    rotationToEuler(kf.rotation, pose6d.roll, pose6d.pitch, pose6d.yaw);
-    pose6d.time = kf.timestamp;
+    pose6d.x = static_cast<float>(new_kf.position.x());
+    pose6d.y = static_cast<float>(new_kf.position.y());
+    pose6d.z = static_cast<float>(new_kf.position.z());
+    pose6d.intensity = static_cast<float>(new_kf.id);
+    rotationToEuler(new_kf.rotation, pose6d.roll, pose6d.pitch, pose6d.yaw);
+    pose6d.time = new_kf.timestamp;
     cloud_key_poses_6d_->push_back(pose6d);
     
     // Add to unoptimized pose cloud (same as original at creation time)
     PointTypePose unopt_pose6d;
-    unopt_pose6d.x = static_cast<float>(kf.original_position.x());
-    unopt_pose6d.y = static_cast<float>(kf.original_position.y());
-    unopt_pose6d.z = static_cast<float>(kf.original_position.z());
-    unopt_pose6d.intensity = static_cast<float>(kf.id);
-    rotationToEuler(kf.original_rotation, unopt_pose6d.roll, unopt_pose6d.pitch, unopt_pose6d.yaw);
-    unopt_pose6d.time = kf.timestamp;
+    unopt_pose6d.x = static_cast<float>(new_kf.original_position.x());
+    unopt_pose6d.y = static_cast<float>(new_kf.original_position.y());
+    unopt_pose6d.z = static_cast<float>(new_kf.original_position.z());
+    unopt_pose6d.intensity = static_cast<float>(new_kf.id);
+    rotationToEuler(new_kf.original_rotation, unopt_pose6d.roll, unopt_pose6d.pitch, unopt_pose6d.yaw);
+    unopt_pose6d.time = new_kf.timestamp;
     unoptimized_key_poses_6d_->push_back(unopt_pose6d);
     
     kdtree_updated_ = false;
     
-    std::cout << "[KeyFrameManager] Added keyframe " << kf.id 
-              << " at position (" << kf.position.x() << ", " 
-              << kf.position.y() << ", " << kf.position.z() << ")" 
-              << ", total: " << keyframes_.size() << std::endl;
+    // Memory management: cleanup old keyframe clouds
+    if (config_.enable_cloud_cleanup && 
+        keyframes_.size() > static_cast<size_t>(config_.max_keyframes_with_cloud)) {
+        cleanupOldClouds();
+    }
+    
+    std::cout << "[KeyFrameManager] Added keyframe " << new_kf.id 
+              << " at position (" << new_kf.position.x() << ", " 
+              << new_kf.position.y() << ", " << new_kf.position.z() << ")" 
+              << ", total: " << keyframes_.size() 
+              << ", with_cloud: " << getKeyframesWithCloudCount() << std::endl;
 }
 
 void KeyFrameManager::addKeyFrame(size_t id, double timestamp, const M3D& rotation,
@@ -174,39 +189,78 @@ CloudType::Ptr KeyFrameManager::buildSubmap(const std::vector<int>& indices) {
         }
         
         const KeyFrame& kf = keyframes_[idx];
-        if (!kf.cloud) {
+        if (!kf.cloud || !kf.cloud_valid) {
             continue;
         }
         
-        // Transform cloud to world frame
-        CloudType::Ptr transformed(new CloudType());
-        for (const auto& pt : kf.cloud->points) {
-            PointType new_pt = pt;
-            V3D p_body(pt.x, pt.y, pt.z);
-            V3D p_world = kf.rotation * p_body + kf.position;
-            new_pt.x = static_cast<float>(p_world.x());
-            new_pt.y = static_cast<float>(p_world.y());
-            new_pt.z = static_cast<float>(p_world.z());
-            transformed->push_back(new_pt);
-        }
-        
-        *submap += *transformed;
+        // Add cloud directly in body frame (NO transformation to world frame)
+        // This is important for correct loop closure constraint calculation
+        *submap += *(kf.cloud);
     }
     
     return submap;
 }
 
-CloudType::Ptr KeyFrameManager::buildSubmapAroundKeyFrame(int kf_idx, int num_neighbors) {
-    std::vector<int> indices;
+// Build submap in the center keyframe's body coordinate system
+// This is compatible with fast_lio_sam's loopFindNearKeyframes function
+CloudType::Ptr KeyFrameManager::buildSubmapInBodyFrame(int center_idx, int num_neighbors) {
+    CloudType::Ptr submap(new CloudType());
     
-    int start_idx = std::max(0, kf_idx - num_neighbors);
-    int end_idx = std::min(static_cast<int>(keyframes_.size()) - 1, kf_idx + num_neighbors);
-    
-    for (int i = start_idx; i <= end_idx; ++i) {
-        indices.push_back(i);
+    if (center_idx < 0 || center_idx >= static_cast<int>(keyframes_.size())) {
+        return submap;
     }
     
-    return buildSubmap(indices);
+    const KeyFrame& center_kf = keyframes_[center_idx];
+    
+    // Check if center frame has valid cloud
+    if (!center_kf.cloud_valid || !center_kf.cloud || center_kf.cloud->empty()) {
+        std::cout << "[KeyFrameManager] Center keyframe " << center_idx 
+                  << " has no valid cloud (cleaned up by memory management)" << std::endl;
+        return submap;  // Return empty - caller should check
+    }
+    
+    Eigen::Matrix4f center_transform = Eigen::Matrix4f::Identity();
+    center_transform.block<3, 3>(0, 0) = center_kf.rotation.cast<float>();
+    center_transform.block<3, 1>(0, 3) = center_kf.position.cast<float>();
+    Eigen::Matrix4f center_transform_inv = center_transform.inverse();
+    
+    int start_idx = std::max(0, center_idx - num_neighbors);
+    int end_idx = std::min(static_cast<int>(keyframes_.size()) - 1, center_idx + num_neighbors);
+    
+    int valid_cloud_count = 0;
+    for (int i = start_idx; i <= end_idx; ++i) {
+        const KeyFrame& kf = keyframes_[i];
+        if (!kf.cloud_valid || !kf.cloud || kf.cloud->empty()) {
+            continue;  // Skip keyframes with released clouds
+        }
+        
+        if (i == center_idx) {
+            // Center frame: keep in its own body frame (no transform)
+            *submap += *(kf.cloud);
+            valid_cloud_count++;
+        } else {
+            // Neighbor frames: transform to center frame's body coordinate
+            // T_center_body_to_neighbor_body = T_world_to_center_body * T_neighbor_body_to_world
+            Eigen::Matrix4f kf_transform = Eigen::Matrix4f::Identity();
+            kf_transform.block<3, 3>(0, 0) = kf.rotation.cast<float>();
+            kf_transform.block<3, 1>(0, 3) = kf.position.cast<float>();
+            
+            Eigen::Matrix4f relative_transform = center_transform_inv * kf_transform;
+            
+            CloudType::Ptr transformed(new CloudType());
+            pcl::transformPointCloud(*(kf.cloud), *transformed, relative_transform);
+            *submap += *transformed;
+            valid_cloud_count++;
+        }
+    }
+    
+    if (valid_cloud_count < 3) {
+        std::cout << "[KeyFrameManager] Submap around " << center_idx 
+                  << " has only " << valid_cloud_count << " valid clouds (insufficient)" << std::endl;
+        submap->clear();  // Not enough clouds for reliable ICP
+    }
+    
+    return submap;
 }
 
 void KeyFrameManager::updateKeyFramePose(size_t idx, const M3D& rotation, const V3D& position) {
@@ -267,4 +321,55 @@ PoseCloud::Ptr KeyFrameManager::getUnoptimizedKeyPoses6D() const {
     PoseCloud::Ptr cloud(new PoseCloud());
     *cloud = *unoptimized_key_poses_6d_;
     return cloud;
+}
+
+void KeyFrameManager::downsampleCloud(CloudType::Ptr& cloud) {
+    if (!cloud || cloud->empty() || config_.cloud_downsample_res <= 0) {
+        return;
+    }
+    
+    CloudType::Ptr downsampled(new CloudType());
+    pcl::VoxelGrid<PointType> filter;
+    filter.setLeafSize(static_cast<float>(config_.cloud_downsample_res),
+                       static_cast<float>(config_.cloud_downsample_res),
+                       static_cast<float>(config_.cloud_downsample_res));
+    filter.setInputCloud(cloud);
+    filter.filter(*downsampled);
+    cloud = downsampled;
+}
+
+size_t KeyFrameManager::getKeyframesWithCloudCount() const {
+    size_t count = 0;
+    for (const auto& kf : keyframes_) {
+        if (kf.cloud_valid && kf.cloud && !kf.cloud->empty()) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+void KeyFrameManager::cleanupOldClouds() {
+    // Release point clouds from oldest keyframes, keeping only max_keyframes_with_cloud
+    // Note: This is called from addKeyFrame which already holds the lock
+    
+    size_t current_with_cloud = getKeyframesWithCloudCount();
+    if (current_with_cloud <= static_cast<size_t>(config_.max_keyframes_with_cloud)) {
+        return;
+    }
+    
+    size_t to_cleanup = current_with_cloud - config_.max_keyframes_with_cloud;
+    size_t cleaned = 0;
+    
+    for (size_t i = 0; i < keyframes_.size() && cleaned < to_cleanup; ++i) {
+        if (keyframes_[i].cloud_valid && keyframes_[i].cloud) {
+            keyframes_[i].cloud.reset();  // Release the point cloud memory
+            keyframes_[i].cloud_valid = false;
+            ++cleaned;
+        }
+    }
+    
+    if (cleaned > 0) {
+        std::cout << "[KeyFrameManager] Cleaned up " << cleaned 
+                  << " old keyframe clouds for memory management" << std::endl;
+    }
 }

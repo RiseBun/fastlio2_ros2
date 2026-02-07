@@ -166,6 +166,28 @@ LoopClosureResult LoopDetector::detectLoopClosure() {
         return result;
     }
     
+    // Step 1.5: Check for duplicate detection and cooldown
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        
+        // Create normalized pair (smaller first)
+        std::pair<int, int> loop_pair = std::make_pair(
+            std::min(current_idx, loop_idx),
+            std::max(current_idx, loop_idx)
+        );
+        
+        // Check if this pair was already detected
+        if (detected_loop_pairs_.count(loop_pair) > 0) {
+            return result;  // Skip duplicate
+        }
+        
+        // Check cooldown: don't detect new loops too soon after last detection
+        if (last_loop_detected_idx_ >= 0 && 
+            current_idx - last_loop_detected_idx_ < LOOP_COOLDOWN_FRAMES) {
+            return result;  // Still in cooldown period
+        }
+    }
+    
     // Step 2: ScanContext verification
     float sc_score, yaw_offset;
     if (!verifyScanContext(current_idx, loop_idx, sc_score, yaw_offset)) {
@@ -173,16 +195,18 @@ LoopClosureResult LoopDetector::detectLoopClosure() {
         return result;
     }
     
-    // Step 3: Build submaps
-    CloudType::Ptr source_submap = buildSubmap(current_idx);
-    CloudType::Ptr target_submap = buildSubmap(loop_idx);
+    // Step 3: Build submaps in body coordinate frame (following fast_lio_sam approach)
+    // Each submap is built in its center frame's body coordinate
+    CloudType::Ptr source_submap = kf_manager_->buildSubmapInBodyFrame(current_idx, config_.submap_size);
+    CloudType::Ptr target_submap = kf_manager_->buildSubmapInBodyFrame(loop_idx, config_.submap_size);
     
-    if (!source_submap || !target_submap) {
+    if (!source_submap || !target_submap || source_submap->empty() || target_submap->empty()) {
         std::cout << "[LoopDetector] Failed to build submaps" << std::endl;
         return result;
     }
     
     // Step 4: ICP verification
+    // ICP finds transform from source_body to target_body
     Eigen::Affine3f icp_transform;
     float icp_score;
     if (!verifyWithICP(source_submap, target_submap, yaw_offset, 
@@ -191,13 +215,34 @@ LoopClosureResult LoopDetector::detectLoopClosure() {
         return result;
     }
     
-    // Success - fill result
+    // Get world poses for both keyframes
+    const KeyFrame& current_kf = kf_manager_->getKeyFrame(current_idx);
+    const KeyFrame& loop_kf = kf_manager_->getKeyFrame(loop_idx);
+    
+    // Success - fill result with all information needed for constraint calculation
     result.valid = true;
     result.current_idx = current_idx;
     result.loop_idx = loop_idx;
-    result.transform = icp_transform;
+    result.icp_transform = icp_transform;
     result.fitness_score = icp_score;
     result.sc_score = sc_score;
+    
+    // Store world poses for constraint calculation in lio_node
+    result.current_rotation = current_kf.rotation.cast<float>();
+    result.current_position = current_kf.position.cast<float>();
+    result.loop_rotation = loop_kf.rotation.cast<float>();
+    result.loop_position = loop_kf.position.cast<float>();
+    
+    // Record this loop pair and update cooldown
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::pair<int, int> loop_pair = std::make_pair(
+            std::min(current_idx, loop_idx),
+            std::max(current_idx, loop_idx)
+        );
+        detected_loop_pairs_.insert(loop_pair);
+        last_loop_detected_idx_ = current_idx;
+    }
     
     std::cout << "[LoopDetector] Loop closure detected! current=" << current_idx 
               << " loop=" << loop_idx << " fitness=" << icp_score << std::endl;

@@ -7,6 +7,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/filters/voxel_grid.h>
 #include <sophus/so3.hpp>
 
 #include "../map_builder/commons.h"
@@ -20,21 +21,28 @@ struct KeyFrame {
     V3D position;           // world -> imu translation
     M3D original_rotation;  // unoptimized rotation (before loop closure)
     V3D original_position;  // unoptimized position (before loop closure)
-    CloudType::Ptr cloud;   // undistorted point cloud in body frame
+    CloudType::Ptr cloud;   // undistorted point cloud in body frame (may be nullptr if cleaned)
+    bool cloud_valid;       // whether cloud is still in memory
     
     KeyFrame() : id(0), timestamp(0.0), rotation(M3D::Identity()), 
                  position(V3D::Zero()), original_rotation(M3D::Identity()),
-                 original_position(V3D::Zero()), cloud(nullptr) {}
+                 original_position(V3D::Zero()), cloud(nullptr), cloud_valid(false) {}
     
     KeyFrame(size_t _id, double _time, const M3D& _rot, const V3D& _pos, 
              CloudType::Ptr _cloud)
         : id(_id), timestamp(_time), rotation(_rot), position(_pos),
-          original_rotation(_rot), original_position(_pos), cloud(_cloud) {}
+          original_rotation(_rot), original_position(_pos), cloud(_cloud),
+          cloud_valid(_cloud != nullptr && !_cloud->empty()) {}
 };
 
 struct KeyFrameConfig {
     double dist_threshold = 1.0;      // keyframe distance threshold (m)
     double angle_threshold = 0.2;     // keyframe angle threshold (rad)
+    
+    // Memory management config
+    int max_keyframes_with_cloud = 500;   // max keyframes that keep cloud in memory
+    bool enable_cloud_cleanup = true;     // enable automatic cloud cleanup
+    double cloud_downsample_res = 0.15;   // downsample resolution for keyframe cloud (0=disable)
 };
 
 class KeyFrameManager {
@@ -79,8 +87,13 @@ public:
     // Build submap from keyframe indices
     CloudType::Ptr buildSubmap(const std::vector<int>& indices);
     
-    // Build submap around a keyframe
-    CloudType::Ptr buildSubmapAroundKeyFrame(int kf_idx, int num_neighbors);
+    // Build submap around a keyframe (in center frame's body coordinate)
+    CloudType::Ptr buildSubmapInBodyFrame(int center_idx, int num_neighbors);
+    
+    // Legacy function - calls buildSubmapInBodyFrame
+    CloudType::Ptr buildSubmapAroundKeyFrame(int kf_idx, int num_neighbors) {
+        return buildSubmapInBodyFrame(kf_idx, num_neighbors);
+    }
     
     // Update keyframe pose (for loop closure correction)
     void updateKeyFramePose(size_t idx, const M3D& rotation, const V3D& position);
@@ -93,12 +106,17 @@ public:
     PoseCloud::Ptr getCloudKeyPoses6D() const;
     PoseCloud::Ptr getUnoptimizedKeyPoses6D() const;
     
+    // Memory management
+    size_t getKeyframesWithCloudCount() const;
+    void cleanupOldClouds();
+    
     // Thread-safe access
     std::mutex& getMutex() { return mutex_; }
 
 private:
     void updateKdTree();
     void updatePoseClouds(size_t idx);
+    void downsampleCloud(CloudType::Ptr& cloud);
     
     // Euler angle conversion helper
     static void rotationToEuler(const M3D& rotation, float& roll, float& pitch, float& yaw);

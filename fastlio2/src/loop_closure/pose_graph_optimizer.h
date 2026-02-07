@@ -12,6 +12,7 @@
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/nonlinear/ISAM2.h>
+#include <gtsam/nonlinear/LevenbergMarquardtOptimizer.h>
 #include <gtsam/inference/Symbol.h>
 
 #include "../map_builder/commons.h"
@@ -21,6 +22,8 @@ struct PoseGraphConfig {
     double prior_noise_translation = 1e-12;
     double odom_noise_rotation = 1e-6;
     double odom_noise_translation = 1e-4;
+    double loop_noise_rotation = 0.01;      // Base noise for loop closure rotation
+    double loop_noise_translation = 0.05;   // Base noise for loop closure translation
     double isam2_relinearize_threshold = 0.01;
     int isam2_relinearize_skip = 1;
 };
@@ -30,6 +33,25 @@ struct OptimizedPose {
     size_t id;
     M3D rotation;
     V3D position;
+};
+
+// Edge types for serialization
+enum class EdgeType {
+    ODOMETRY,
+    LOOP_CLOSURE
+};
+
+// Edge structure for saving/loading
+struct PoseGraphEdge {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    EdgeType type;
+    size_t from_id;
+    size_t to_id;
+    M3D relative_rotation;
+    V3D relative_translation;
+    double noise_rotation;
+    double noise_translation;
+    float fitness_score;  // For loop closure edges
 };
 
 class PoseGraphOptimizer {
@@ -53,7 +75,7 @@ public:
                        const Eigen::Affine3f& relative_transform,
                        float fitness_score);
     
-    // Run optimization
+    // Run optimization (ISAM2 incremental)
     void optimize();
     
     // Get optimized pose for a specific keyframe
@@ -76,8 +98,20 @@ public:
     // Get number of nodes
     size_t numNodes() const { return num_nodes_; }
     
-    // Save pose graph to file (g2o format)
+    // Save pose graph to file (g2o format) - vertices only (legacy)
     void savePoseGraph(const std::string& filepath);
+    
+    // Save complete pose graph with edges (g2o format)
+    void savePoseGraphFull(const std::string& filepath);
+    
+    // Load pose graph from file (g2o format)
+    bool loadPoseGraph(const std::string& filepath);
+    
+    // Batch re-optimization using LevenbergMarquardt (for offline optimization)
+    bool reoptimize();
+    
+    // Get edges for external use
+    const std::vector<PoseGraphEdge>& getEdges() const { return edges_; }
     
     // Thread-safe access
     std::mutex& getMutex() { return mutex_; }
@@ -92,6 +126,11 @@ private:
     gtsam::Values initial_estimate_;
     gtsam::ISAM2* isam2_;
     gtsam::Values current_estimate_;
+    
+    // Store edges for complete serialization
+    std::vector<PoseGraphEdge> edges_;
+    // Store initial poses for re-optimization
+    std::vector<std::pair<size_t, gtsam::Pose3>> initial_poses_;
     
     size_t num_nodes_ = 0;
     bool loop_closed_ = false;
