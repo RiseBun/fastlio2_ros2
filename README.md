@@ -1031,6 +1031,6 @@ ros2 bag record -o my_bag /livox/lidar /livox/imu
 
 ---
 
-**项目维护**: FASTLIO2 ROS2 Team  
+**项目维护**: lpn  
 **许可证**: MIT License  
 **版本**: 3.0
