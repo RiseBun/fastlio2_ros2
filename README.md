@@ -429,24 +429,25 @@ source /opt/ros/humble/setup.sh
 ```bash
 # 克隆项目 (如果还没有)
 cd ~
-git clone https://github.com/your-username/fastlio2_ros2.git
+git clone https://github.com/RiseBun/fastlio2_ros2.git
 
-# 编译
+# 分步编译，先执行这些
 cd ~/fastlio2_ros2
 source /opt/ros/humble/setup.bash
 source ~/livox_ws/install/setup.bash
 colcon build --packages-select interface
 source install/setup.bash
+# 再执行这些
 colcon build 
-
+source install/setup.bash
 # 添加到环境
 echo "source ~/fastlio2_ros2/install/setup.bash" >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### 3.4 新用户配置 (重要!)
+### 3.4 新用户配置，新用户请走4.1 gui启动
 
-> **首次部署必读**: 以下文件包含硬编码路径，新用户必须根据自己的系统环境进行修改。
+> **首次部署**: 以下文件包含硬编码路径，新用户根据自己的系统环境进行修改。
 
 #### 3.4.1 配置文件路径修改
 
