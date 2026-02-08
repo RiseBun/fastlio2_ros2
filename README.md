@@ -445,7 +445,7 @@ echo "source ~/fastlio2_ros2/install/setup.bash" >> ~/.bashrc
 source ~/.bashrc
 ```
 
-### 3.4 新用户配置，新用户请走4.1 gui启动
+### 3.4 新用户配置，简单使用请走4.1 gui启动
 
 > **首次部署**: 以下文件包含硬编码路径，新用户根据自己的系统环境进行修改。
 
