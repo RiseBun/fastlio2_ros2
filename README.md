@@ -436,7 +436,8 @@ cd ~/fastlio2_ros2
 source /opt/ros/humble/setup.bash
 source ~/livox_ws/install/setup.bash
 colcon build --packages-select interface
-colcon build --symlink-install
+source install/setup.bash
+colcon build 
 
 # 添加到环境
 echo "source ~/fastlio2_ros2/install/setup.bash" >> ~/.bashrc
